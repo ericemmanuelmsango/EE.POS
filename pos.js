@@ -6,7 +6,7 @@
      • credit (Mkopo) sales are added to the customer's account in Debtors
      • has its own users, sales, reports and settings
    ===================================================================== */
-const APP_VERSION = "POS v1.0";
+const APP_VERSION = "POS v1.1";
 const firebaseConfig = {
   apiKey: "AIzaSyCgoZC_HGNZfcDgnyNRd6-rKdpZy1MIIiM",
   authDomain: "shem-rogart-motor-spair-parts.firebaseapp.com",
@@ -21,6 +21,7 @@ const auth = firebase.auth();
 const colRef = db.collection("wadai_na_wadaiwa");   // same place the first system keeps its data
 const POS_DOC = "pos_settings";
 const SALE_PREFIX = "possale_";
+const EXP_PREFIX = "posexp_", PAY_PREFIX = "pospay_", CLOSE_PREFIX = "posclose_";
 const SHARED = ["entries", "products", "stockItems", "stockMovements"];
 const PART_LIMIT = 550000;
 
@@ -48,7 +49,7 @@ const clean = (o) => JSON.parse(JSON.stringify(o)); // Firestore rejects undefin
 const D = {
   loaded: false, err: "", sync: null,
   products: [], stockItems: [], stockMovements: [], entries: [], settings: {},
-  sales: [], pos: null,
+  sales: [], expenses: [], payments: [], closings: [], pos: null, needDeviceLogin: false,
   parts: {},            // shared field -> number of part documents
 };
 const POS_DEFAULTS = {
@@ -88,7 +89,11 @@ function startListening() {
       }
     });
     D.settings = main.settings || {};
-    D.sales = Object.keys(docs).filter((id) => id.startsWith(SALE_PREFIX)).map((id) => docs[id]);
+    const pick = (pre) => Object.keys(docs).filter((id) => id.startsWith(pre)).map((id) => docs[id]);
+    D.sales = pick(SALE_PREFIX);
+    D.expenses = pick(EXP_PREFIX);
+    D.payments = pick(PAY_PREFIX);
+    D.closings = pick(CLOSE_PREFIX);
     D.pos = docs[POS_DOC] || null;
     D.sync = { fromCache: snap.metadata.fromCache, pending: snap.metadata.hasPendingWrites, at: Date.now() };
     D.loaded = true;
@@ -98,7 +103,10 @@ function startListening() {
     render();
   }, (err) => {
     D.loaded = true;
-    D.err = err && err.code === "permission-denied" ? "rules" : (err && err.message) || "Hitilafu ya mtandao";
+    const denied = err && err.code === "permission-denied";
+    const u = auth.currentUser;
+    if (denied && (!u || u.isAnonymous)) D.needDeviceLogin = true;
+    else D.err = denied ? "rules" : (err && err.message) || "Hitilafu ya mtandao";
     render();
   });
 }
@@ -242,6 +250,7 @@ function logoHtml() {
 
 function view() {
   if (!D.loaded) return `<div class="loading"><div class="spin"></div>Inaunganisha na database ya E.E.MSANGO...</div>`;
+  if (D.needDeviceLogin) return deviceLoginView();
   if (D.err) return errorView();
   const cfg = posCfg();
   if (!cfg.users.length) return setupView();
@@ -340,14 +349,16 @@ function logout() {
 
 /* ---------- app shell ---------- */
 function shellView() {
-  const tabs = [["uza", "🛒 Uza"], ["stock", "📦 Bidhaa"], ["mauzo", "🧾 Mauzo"]];
+  const tabs = [["uza", "🛒 Uza"], ["stock", "📦 Bidhaa"], ["mauzo", "🧾 Mauzo"], ["madeni", "📒 Madeni"], ["matumizi", "💸 Matumizi"], ["funga", "💰 Funga Siku"]];
   if (isOwner()) tabs.push(["ripoti", "📊 Ripoti"], ["watu", "👥 Watumiaji"], ["mipangilio", "⚙️ Mipangilio"]);
   const s = D.sync;
   const sync = !s ? "⚪" : s.fromCache ? "🔴 Offline" : s.pending ? "🟡 Inahifadhi" : "🟢 Live";
-  const pages = { uza: pagePOS, stock: pageStock, mauzo: pageSales, ripoti: pageReport, watu: pageUsers, mipangilio: pageSettings };
+  const pages = { uza: pagePOS, stock: pageStock, mauzo: pageSales, madeni: pageDebts, matumizi: pageExpenses, funga: pageClose, ripoti: pageReport, watu: pageUsers, mipangilio: pageSettings };
   if (!pages[U.page] || (!isOwner() && ["ripoti", "watu", "mipangilio"].includes(U.page))) U.page = "uza";
   return `<div class="top"><div class="logo"><span class="mk">${logoHtml()}</span><span class="t">E.E.MSANGO POS</span></div>
-    <div class="who"><span class="sync">${sync}</span><b>${isOwner() ? "👑" : "🧑‍💼"} ${esc(U.user.name)}</b><button onclick="logout()">⏻ Toka</button></div></div>
+    <div class="who"><span class="sync">${sync}</span>
+      <button class="icon-top" title="Dark / Light" onclick="toggleTheme()">${document.documentElement.getAttribute("data-theme") === "dark" ? "☀️" : "🌙"}</button>
+      <button class="icon-top" title="Skrini nzima" onclick="toggleFull()">⛶</button><b>${isOwner() ? "👑" : "🧑‍💼"} ${esc(U.user.name)}</b><button onclick="logout()">⏻ Toka</button></div></div>
   <div class="tabs">${tabs.map(([k, l]) => `<button class="tab ${U.page === k ? "on" : ""}" onclick="go('${k}')">${l}</button>`).join("")}</div>
   <main>${pages[U.page]()}</main>
   ${U.page === "uza" && U.cart.length ? `<button class="cart-fab no-print" onclick="document.getElementById('cart').scrollIntoView({behavior:'smooth'})">🛒 ${U.cart.length} · ${fmt(cartTotal())}</button>` : ""}
@@ -355,6 +366,8 @@ function shellView() {
   ${U.printList ? printListModal() : ""}
   ${U.userForm ? userFormModal() : ""}
   ${U.editPrice ? priceModal() : ""}
+  ${U.payFor ? payModal() : ""}
+  ${U.payReceipt ? payReceiptModal(U.payReceipt) : ""}
   ${U.toast ? `<div class="toast">${esc(U.toast)}</div>` : ""}`;
 }
 function go(p) { U.page = p; U.openSale = null; window.scrollTo(0, 0); render(); }
@@ -783,6 +796,13 @@ function pageReport() {
     });
   });
   const profit = rev - cost;
+  const [ra, rb] = rangeBounds(U.repRange, U.repFrom, U.repTo);
+  const exps = D.expenses.filter((x) => !x.deleted && x.createdAt >= ra && x.createdAt < rb);
+  const expTotal = exps.reduce((a, x) => a + x.amount, 0);
+  const expByCat = {};
+  exps.forEach((x) => { expByCat[x.category] = (expByCat[x.category] || 0) + x.amount; });
+  const collected = D.payments.filter((x) => x.createdAt >= ra && x.createdAt < rb).reduce((a, x) => a + x.amount, 0);
+  const net = profit - expTotal;
   const top = Object.entries(byItem).sort((a, b) => b[1].qty - a[1].qty).slice(0, 10);
   const lowItems = V.items.filter((i) => i.qty > 0 && i.qty <= i.low).slice(0, 12);
   const tblKV = (o, f) => Object.entries(o).filter(([, v]) => v).sort((a, b) => b[1] - a[1]).map(([k, v]) => `<tr><td>${esc(f ? f(k) : k)}</td><td class="r"><b>${fmt(v)}</b></td><td class="r" style="color:var(--mute)">${rev ? Math.round((v / rev) * 100) : 0}%</td></tr>`).join("") || `<tr><td class="empty">—</td></tr>`;
@@ -792,6 +812,9 @@ function pageReport() {
     <div class="stat"><div class="l">Mauzo</div><div class="v">${fmt(rev)}</div></div>
     <div class="stat"><div class="l">Gharama ya spea zilizouzwa</div><div class="v">${fmt(cost)}</div></div>
     <div class="stat ${profit >= 0 ? "g" : "r"}"><div class="l">${profit >= 0 ? "Faida" : "Hasara"}</div><div class="v">${fmt(Math.abs(profit))}</div></div>
+    <div class="stat r"><div class="l">💸 Matumizi</div><div class="v">${fmt(expTotal)}</div></div>
+    <div class="stat ${net >= 0 ? "g" : "r"}"><div class="l">${net >= 0 ? "✅ Faida halisi" : "❌ Hasara halisi"} (faida − matumizi)</div><div class="v">${fmt(Math.abs(net))}</div></div>
+    <div class="stat"><div class="l">📒 Madeni yaliyolipwa</div><div class="v">${fmt(collected)}</div></div>
     <div class="stat"><div class="l">Asilimia ya faida</div><div class="v">${rev ? Math.round((profit / rev) * 100) : 0}%</div></div>
     <div class="stat"><div class="l">Risiti · Spea zilizouzwa</div><div class="v">${list.length} · ${units}</div></div>
   </div>
@@ -802,7 +825,8 @@ function pageReport() {
     </tbody></table></div></div>
     <div class="panel"><h3>🧑‍💼 Kwa kila muuzaji</h3><table><tbody>${tblKV(bySeller)}</tbody></table>
       <h3 style="margin-top:14px">💳 Njia ya malipo</h3><table><tbody>${tblKV(byPay, (k) => (k === "M-Pesa" ? "Simu/Benki" : k))}</tbody></table>
-      <h3 style="margin-top:14px">🏷️ Rejareja / Jumla</h3><table><tbody>${tblKV(byMode, (k) => (k === "jumla" ? "Jumla" : "Rejareja"))}</tbody></table></div>
+      <h3 style="margin-top:14px">🏷️ Rejareja / Jumla</h3><table><tbody>${tblKV(byMode, (k) => (k === "jumla" ? "Jumla" : "Rejareja"))}</tbody></table>
+      <h3 style="margin-top:14px">💸 Matumizi kwa aina</h3><table><tbody>${Object.entries(expByCat).sort((a, b) => b[1] - a[1]).map(([k, v]) => `<tr><td>${esc(k)}</td><td class="r"><b>${fmt(v)}</b></td></tr>`).join("") || `<tr><td class="empty">—</td></tr>`}</tbody></table></div>
   </div>
   <div class="split" style="margin-top:14px">
     <div class="panel"><h3>📅 Kila siku</h3><div class="tbl-wrap"><table><thead><tr><th>Tarehe</th><th class="r">Risiti</th><th class="r">Mauzo</th><th class="r">Faida</th></tr></thead><tbody>
@@ -919,6 +943,7 @@ function pageSettings() {
       <label class="switch" style="margin-top:10px"><input type="checkbox" ${cfg.allowPriceEdit ? "checked" : ""} onchange="savePos({allowPriceEdit:this.checked});logActivity('Ruhusa ya wauzaji kubadilisha bei', this.checked?'imewashwa':'imezimwa')"> Wauzaji wanaruhusiwa kubadilisha bei kwenye kikapu</label>
       <p class="hint">Kila bei inayobadilishwa inaandikwa kwenye risiti na kwenye 📜 Kumbukumbu, pamoja na jina la muuzaji.</p>
     </div>
+    ${securityPanel()}
     <div class="panel"><h2>📱 Weka kama App</h2>
       <p style="font-size:13px;margin:0 0 6px"><b>iPhone (Safari):</b> bonyeza kitufe cha Share (□↑), kisha <b>Add to Home Screen</b>.</p>
       <p style="font-size:13px;margin:0 0 6px"><b>Android (Chrome):</b> bonyeza ⋮, kisha <b>Install app</b> au <b>Add to Home screen</b>.</p>
@@ -968,7 +993,9 @@ function receiptModal(r) {
     ${r.deleted ? `<div class="c" style="color:#c00;font-weight:800;margin-top:4px">*** IMEFUTWA ***</div>` : ""}
     <div class="dl"></div><div class="c">${esc(sh.footer)}</div>
   </div>
-  <div class="ov-actions no-print"><button class="btn btn-g" onclick="U.receipt=null;render()">Funga</button><button class="btn btn-p" onclick="window.print()">🖨️ Print</button></div></div></div>`;
+  <div class="ov-actions no-print"><button class="btn btn-g" onclick="U.receipt=null;render()">Funga</button>
+    <button class="btn btn-a" onclick="sendWhatsApp(U.receipt.phone, saleText(U.receipt))">📲 WhatsApp</button>
+    <button class="btn btn-p" onclick="window.print()">🖨️ Print</button></div></div></div>`;
 }
 function printListModal() {
   const p = U.printList, sh = posCfg().shop;
@@ -988,10 +1015,13 @@ function printListModal() {
 /* =====================================================================
    START
    ===================================================================== */
-auth.signInAnonymously().catch(() => { D.loaded = true; D.err = "Imeshindikana kuunganisha na cloud. Angalia mtandao wako."; render(); });
 let _started = false;
 auth.onAuthStateChanged((u) => {
-  if (!u || _started) return;
+  if (!u) {
+    auth.signInAnonymously().catch(() => { D.loaded = true; D.err = "Imeshindikana kuunganisha na cloud. Angalia mtandao wako."; render(); });
+    return;
+  }
+  if (_started) return;
   _started = true;
   startListening();
 });
@@ -1005,3 +1035,374 @@ const _restore = setInterval(() => {
     if (u && !U.user) { U.user = u; render(); }
   } catch (e) {}
 }, 200);
+
+/* =====================================================================
+   v1.1 — Funga Siku · Madeni · Matumizi · WhatsApp · Dark mode · Ulinzi
+   ===================================================================== */
+Object.assign(U, {
+  payFor: null, payReceipt: null, debtQ: "", payRange: "today", payFrom: "", payTo: "",
+  expForm: { category: "Usafiri", amount: "", via: "Cash", note: "", date: "" }, expRange: "today", expFrom: "", expTo: "",
+  closeForm: { date: "", scope: "", opening: "", counted: "", note: "" }, closeRange: "week", closeFrom: "", closeTo: "",
+});
+function toggleTheme() {
+  const next = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", next);
+  try { localStorage.setItem("ee_theme", next); } catch (e) {}
+  render();
+}
+function toggleFull() {
+  const d = document, el = d.documentElement;
+  const inFs = d.fullscreenElement || d.webkitFullscreenElement;
+  if (inFs) (d.exitFullscreen || d.webkitExitFullscreen).call(d);
+  else if (el.requestFullscreen) el.requestFullscreen().catch(() => toast("Skrini nzima haiwezekani kwenye kifaa hiki"));
+  else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+  else toast("Kwenye iPhone: weka kama app (Add to Home Screen) ili ijae skrini");
+}
+async function nextNo(field, prefix) {
+  try {
+    const n = await withTimeout(db.runTransaction(async (tx) => {
+      const s = await tx.get(colRef.doc(POS_DOC));
+      const c = ((s.exists && s.data()[field]) || 0) + 1;
+      tx.set(colRef.doc(POS_DOC), { [field]: c }, { merge: true });
+      return c;
+    }), 5000);
+    return prefix + String(n).padStart(5, "0");
+  } catch (e) {
+    const d = new Date();
+    return prefix + String(d.getFullYear()).slice(2) + pad(d.getMonth() + 1) + pad(d.getDate()) + "-" + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds());
+  }
+}
+
+/* ---------- 📲 WhatsApp ---------- */
+function waNumber(phone) {
+  let d = String(phone || "").replace(/\D/g, "");
+  if (!d) return "";
+  if (d.startsWith("0")) d = "255" + d.slice(1);
+  else if (d.length === 9 && /^[67]/.test(d)) d = "255" + d;
+  return d;
+}
+function sendWhatsApp(phone, text) {
+  const n = waNumber(phone);
+  window.open("https://wa.me/" + n + "?text=" + encodeURIComponent(text), "_blank");
+  logActivity("Ametuma risiti WhatsApp", n || "(amechagua namba)");
+}
+function shopHeaderText() {
+  const sh = posCfg().shop;
+  return `*${sh.name}*\n${sh.line}${sh.tin ? "\nTIN: " + sh.tin : ""}${sh.phone ? "\nSimu: " + sh.phone : ""}`;
+}
+function saleText(r) {
+  return `${shopHeaderText()}\n\n🧾 Risiti: *${r.no}*\n📅 ${dateTimeStr(r.createdAt)}\n${r.customer ? "👤 " + r.customer + "\n" : ""}\n` +
+    r.items.map((i) => `• ${i.name}\n   ${i.qty} × ${num(i.price)} = ${num(i.lineTotal)}`).join("\n") +
+    `\n\n*JUMLA: ${fmt(r.total)}*\nMalipo: ${r.pay === "M-Pesa" ? "Simu/Benki" : r.pay}${r.pay === "Mkopo" ? " (deni)" : ""}\n\n${posCfg().shop.footer}`;
+}
+
+/* =====================================================================
+   📒 MADENI — customers pay their debt here (goes straight into Debtors)
+   ===================================================================== */
+const chargesOf = (e) => (e.charges ? e.charges : [{ amount: e.amount || 0 }]);
+const debtBalance = (e) => chargesOf(e).reduce((a, c) => a + (Number(c.amount) || 0), 0) - (e.payments || []).reduce((a, p) => a + (Number(p.amount) || 0), 0);
+function pageDebts() {
+  const q = normName(U.debtQ);
+  const debtors = D.entries.filter((e) => e.kind === "owed_to_me" && !e.archived)
+    .map((e) => ({ e, bal: debtBalance(e) })).filter((x) => x.bal > 0 && (!q || normName(x.e.name + " " + (x.e.phone || "")).includes(q)))
+    .sort((a, b) => b.bal - a.bal);
+  const totalOwed = debtors.reduce((a, x) => a + x.bal, 0);
+  const [a, b] = rangeBounds(U.payRange, U.payFrom, U.payTo);
+  const pays = D.payments.filter((p) => p.createdAt >= a && p.createdAt < b && (isOwner() || p.userId === U.user.id)).sort((x, y) => y.createdAt - x.createdAt);
+  return `<div class="stats">
+    <div class="stat"><div class="l">Wanaodaiwa</div><div class="v">${debtors.length}</div></div>
+    <div class="stat" style=""><div class="l">Jumla ya madeni</div><div class="v" style="color:var(--amber)">${fmt(totalOwed)}</div></div>
+    <div class="stat g"><div class="l">Yaliyolipwa · ${rangeLabel("pay")}</div><div class="v">${fmt(pays.reduce((s, p) => s + p.amount, 0))}</div></div>
+  </div>
+  <div class="split">
+    <div class="panel"><h2>📒 Wateja wanaodaiwa</h2>
+      <input id="debtq" class="field" type="search" autocomplete="off" placeholder="🔍 Tafuta mteja au simu..." value="${esc(U.debtQ)}" oninput="U.debtQ=this.value;soft()" style="margin-bottom:10px">
+      ${debtors.length ? debtors.map(({ e, bal }) => `<button class="debtor" onclick="U.payFor={id:'${e.id}',amount:'',via:'Cash',note:''};render()">
+        <span><b>${esc(e.name)}</b><br><span style="font-size:11.5px;color:var(--mute)">${esc(e.phone || "hakuna simu")} · tangu ${esc(e.dateCreated || "")}</span></span>
+        <span style="text-align:right"><b style="color:var(--amber)">${fmt(bal)}</b><br><span style="font-size:11.5px;color:var(--teal);font-weight:700">Pokea malipo →</span></span></button>`).join("")
+        : `<div class="empty">${q ? "Hakuna anayelingana." : "Hakuna anayedaiwa 👍"}</div>`}
+      <p class="hint">Haya ni madeni yale yale ya <b>Debtors</b> kwenye system ya kwanza. Malipo unayopokea hapa yanaingia kule papo hapo.</p>
+    </div>
+    <div class="panel"><h2>💵 Malipo yaliyopokelewa</h2>${rangePicker("pay")}
+      ${pays.length ? `<div class="tbl-wrap"><table><thead><tr><th>Tarehe</th><th>Mteja</th><th>Njia</th><th class="r">Kiasi</th><th></th></tr></thead><tbody>
+      ${pays.map((p) => `<tr><td>${dateTimeStr(p.createdAt)}<div style="font-size:11px;color:var(--mute)">${esc(p.no)} · ${esc(p.userName)}</div></td><td>${esc(p.customer)}</td><td>${p.via === "Cash" ? "💵 Cash" : "📱 Simu/Benki"}</td>
+        <td class="r"><b>${fmt(p.amount)}</b></td><td class="r"><button class="btn btn-g sm" onclick="U.payReceipt=D.payments.find(x=>x.id==='${p.id}');render()">🧾</button></td></tr>`).join("")}
+      </tbody></table></div>` : `<div class="empty">Hakuna malipo kwenye kipindi hiki.</div>`}
+    </div>
+  </div>`;
+}
+function payModal() {
+  const f = U.payFor, e = D.entries.find((x) => x.id === f.id);
+  if (!e) { U.payFor = null; return ""; }
+  const bal = debtBalance(e);
+  const lastCharges = chargesOf(e).slice(-4).reverse();
+  return `<div class="ov"><div class="modal">
+    <h2>💵 Pokea malipo — ${esc(e.name)}</h2>
+    <div class="note" style="justify-content:space-between"><span>Deni la sasa</span><b style="font-size:18px">${fmt(bal)}</b></div>
+    ${lastCharges.length && lastCharges[0].date ? `<div style="font-size:12px;color:var(--mute);margin-bottom:6px">Madeni ya karibuni: ${lastCharges.map((c) => `${esc(c.date || "")} ${num(c.amount)}`).join(" · ")}</div>` : ""}
+    <label class="l">Kiasi anacholipa</label>
+    <input id="pf-amt" class="field" inputmode="numeric" value="${esc(f.amount)}" oninput="this.value=this.value.replace(/[^0-9]/g,'');U.payFor.amount=this.value;setText('pf-after',fmt(${bal}-(Number(this.value)||0)))">
+    <div class="filters" style="margin-top:6px"><button class="chip" onclick="U.payFor.amount='${bal}';render()">Lipa deni lote (${num(bal)})</button></div>
+    <div class="row" style="margin-top:4px"><span>Deni litakalobaki</span><b id="pf-after">${fmt(bal - (Number(f.amount) || 0))}</b></div>
+    <label class="l">Njia ya malipo</label>
+    <div class="pay">${["Cash", "Simu/Benki"].map((m) => `<button class="${f.via === m ? "on" : ""}" onclick="U.payFor.via='${m}';render()">${m === "Cash" ? "💵" : "📱"} ${m}</button>`).join("")}</div>
+    <label class="l">Maelezo (hiari)</label>
+    <input id="pf-note" class="field" value="${esc(f.note)}" oninput="U.payFor.note=this.value" placeholder="mf. M-Pesa ref QXY123">
+    ${f.msg ? `<div class="err">${esc(f.msg)}</div>` : ""}
+    <div class="ov-actions"><button class="btn btn-g" onclick="U.payFor=null;render()">Ghairi</button><button class="btn btn-p" onclick="receivePayment()" ${f.busy ? "disabled" : ""}>${f.busy ? "Inahifadhi..." : "✅ Pokea"}</button></div>
+  </div></div>`;
+}
+async function receivePayment() {
+  const f = U.payFor, e = D.entries.find((x) => x.id === f.id);
+  if (!e || f.busy) return;
+  const amt = Number(f.amount) || 0, bal = debtBalance(e);
+  if (amt <= 0) { f.msg = "Andika kiasi."; return render(); }
+  if (amt > bal && !confirm(`Kiasi (${fmt(amt)}) ni zaidi ya deni (${fmt(bal)}). Endelea?`)) return;
+  f.busy = true; render();
+  const now = Date.now(), date = dayStr(now);
+  const no = await nextNo("payCounter", "M");
+  const via = f.via === "Cash" ? "Cash" : "Simu/Benki";
+  try {
+    await txUpdateShared("entries", (list) => {
+      const x = list.find((y) => y.id === e.id);
+      if (!x) throw new Error("Mteja hayupo tena kwenye Debtors");
+      x.payments = [...(x.payments || []), { amount: amt, date, via, note: f.note.trim(), by: U.user.name, ref: no }].sort((p, q) => (p.date < q.date ? -1 : 1));
+      return list;
+    });
+  } catch (err) { f.busy = false; f.msg = "⚠️ Imeshindikana: " + (err.message || "angalia mtandao"); return render(); }
+  const rec = clean({ id: uid(), no, createdAt: now, date, entryId: e.id, customer: e.name, phone: e.phone || "", amount: amt, via, note: f.note.trim(),
+    balanceBefore: bal, balanceAfter: bal - amt, userId: U.user.id, userName: U.user.name });
+  colRef.doc(PAY_PREFIX + rec.id).set(rec);
+  logActivity("Amepokea malipo ya deni", `${no} · ${e.name} · ${fmt(amt)} (${via})`);
+  U.payFor = null; U.payReceipt = rec; render();
+}
+function payReceiptModal(r) {
+  const sh = posCfg().shop;
+  return `<div class="ov"><div style="width:100%;max-width:340px">
+  <div class="rcpt print-area">
+    <div class="lg">${logoHtml()}</div>
+    <h3>${esc(sh.name)}</h3><div class="c" style="font-weight:700">${esc(sh.line)}</div>
+    ${sh.tin ? `<div class="c">TIN: ${esc(sh.tin)}</div>` : ""}${sh.phone ? `<div class="c">Simu: ${esc(sh.phone)}</div>` : ""}
+    <div class="dl"></div>
+    <div class="c" style="font-weight:800;color:#111">RISITI YA MALIPO YA DENI</div>
+    <div class="dl"></div>
+    <div class="rr"><span>Na: <b>${esc(r.no)}</b></span><span>${dateTimeStr(r.createdAt)}</span></div>
+    <div class="rr"><span>Mteja</span><span>${esc(r.customer)}</span></div>
+    <div class="rr"><span>Amepokea</span><span>${esc(r.userName)}</span></div>
+    <div class="dl"></div>
+    <div class="rr"><span>Deni kabla</span><span>${fmt(r.balanceBefore)}</span></div>
+    <div class="rr" style="font-weight:800;font-size:14px"><span>AMELIPA</span><span>${fmt(r.amount)}</span></div>
+    <div class="rr"><span>Njia</span><span>${esc(r.via)}</span></div>
+    <div class="rr" style="font-weight:700"><span>Deni lililobaki</span><span>${fmt(Math.max(0, r.balanceAfter))}</span></div>
+    ${r.note ? `<div class="rr"><span>Maelezo</span><span>${esc(r.note)}</span></div>` : ""}
+    <div class="dl"></div><div class="c">${esc(sh.footer)}</div>
+  </div>
+  <div class="ov-actions no-print"><button class="btn btn-g" onclick="U.payReceipt=null;render()">Funga</button>
+    <button class="btn btn-a" onclick="sendWhatsApp(U.payReceipt.phone, payText(U.payReceipt))">📲 WhatsApp</button>
+    <button class="btn btn-p" onclick="window.print()">🖨️ Print</button></div></div></div>`;
+}
+function payText(r) {
+  return `${shopHeaderText()}\n\n✅ *RISITI YA MALIPO YA DENI*\nNa: ${r.no}\n📅 ${dateTimeStr(r.createdAt)}\n👤 ${r.customer}\n\nDeni kabla: ${fmt(r.balanceBefore)}\n*Amelipa: ${fmt(r.amount)}* (${r.via})\nDeni lililobaki: *${fmt(Math.max(0, r.balanceAfter))}*\n\n${posCfg().shop.footer}`;
+}
+
+/* =====================================================================
+   💸 MATUMIZI — shop expenses (reduce real profit and the cash drawer)
+   ===================================================================== */
+const EXP_CATS = ["Kodi", "Umeme", "Maji", "Usafiri", "Chakula", "Mshahara", "Matengenezo", "Mengineyo"];
+function pageExpenses() {
+  const f = U.expForm;
+  const [a, b] = rangeBounds(U.expRange, U.expFrom, U.expTo);
+  const list = D.expenses.filter((x) => !x.deleted && x.createdAt >= a && x.createdAt < b && (isOwner() || x.userId === U.user.id)).sort((x, y) => y.createdAt - x.createdAt);
+  const total = list.reduce((s, x) => s + x.amount, 0);
+  return `<div class="split">
+  <div class="panel"><h2>➕ Andika matumizi</h2>
+    <label class="l">Aina</label>
+    <div class="chips" style="flex-wrap:wrap">${EXP_CATS.map((c) => `<button class="chip ${f.category === c ? "on" : ""}" onclick="U.expForm.category='${c}';render()">${c}</button>`).join("")}</div>
+    <label class="l">Kiasi (TSh)</label>
+    <input id="ex-amt" class="field" inputmode="numeric" value="${esc(f.amount)}" oninput="this.value=this.value.replace(/[^0-9]/g,'');U.expForm.amount=this.value">
+    <label class="l">Pesa imetoka wapi?</label>
+    <div class="pay">${["Cash", "Simu/Benki"].map((m) => `<button class="${f.via === m ? "on" : ""}" onclick="U.expForm.via='${m}';render()">${m === "Cash" ? "💵 Droo (Cash)" : "📱 Simu/Benki"}</button>`).join("")}</div>
+    ${isOwner() ? `<label class="l">Tarehe (acha wazi = leo)</label><input id="ex-date" class="field" type="date" value="${esc(f.date)}" onchange="U.expForm.date=this.value">` : ""}
+    <label class="l">Maelezo</label>
+    <input id="ex-note" class="field" value="${esc(f.note)}" oninput="U.expForm.note=this.value" placeholder="mf. Bodaboda kuleta mzigo">
+    <button class="btn btn-p" style="width:100%;margin-top:12px" onclick="saveExpense()">💾 Hifadhi matumizi</button>
+    <p class="hint">Matumizi ya <b>Cash</b> yanapunguzwa kwenye hesabu ya droo (💰 Funga Siku). Yote yanapunguzwa kwenye <b>faida halisi</b> ya ripoti.</p>
+  </div>
+  <div class="panel"><div class="row"><h2 style="margin:0">💸 Matumizi · ${rangeLabel("exp")}</h2><b style="color:var(--red)">${fmt(total)}</b></div>
+    ${rangePicker("exp")}
+    ${list.length ? `<div class="tbl-wrap"><table><thead><tr><th>Tarehe</th><th>Aina</th><th>Maelezo</th><th class="r">Kiasi</th>${isOwner() ? "<th></th>" : ""}</tr></thead><tbody>
+    ${list.map((x) => `<tr><td>${dateTimeStr(x.createdAt)}<div style="font-size:11px;color:var(--mute)">${esc(x.userName)} · ${x.via === "Cash" ? "💵" : "📱"}</div></td><td>${esc(x.category)}</td><td>${esc(x.note || "")}</td><td class="r"><b>${fmt(x.amount)}</b></td>
+      ${isOwner() ? `<td class="r"><button class="btn btn-g sm" onclick="deleteExpense('${x.id}')">🗑️</button></td>` : ""}</tr>`).join("")}
+    </tbody></table></div>` : `<div class="empty">Hakuna matumizi kwenye kipindi hiki.</div>`}
+  </div></div>`;
+}
+function saveExpense() {
+  const f = U.expForm, amt = Number(f.amount) || 0;
+  if (amt <= 0) return toast("Andika kiasi cha matumizi.");
+  let created = Date.now();
+  if (isOwner() && f.date && f.date !== todayStr()) created = new Date(f.date + "T12:00:00").getTime();
+  const x = clean({ id: uid(), createdAt: created, date: dayStr(created), category: f.category, amount: amt, via: f.via === "Cash" ? "Cash" : "Simu/Benki",
+    note: f.note.trim(), userId: U.user.id, userName: U.user.name, deleted: false });
+  colRef.doc(EXP_PREFIX + x.id).set(x).catch(() => toast("⚠️ Haijafika cloud bado — itatumwa mtandao ukirudi."));
+  logActivity("Ameandika matumizi", `${x.category} · ${fmt(amt)}${x.note ? " · " + x.note : ""}`);
+  U.expForm = { category: f.category, amount: "", via: f.via, note: "", date: "" };
+  toast("✅ Matumizi yamehifadhiwa");
+}
+function deleteExpense(id) {
+  const x = D.expenses.find((y) => y.id === id); if (!x) return;
+  if (!confirm(`Futa matumizi ya ${fmt(x.amount)} (${x.category})?`)) return;
+  colRef.doc(EXP_PREFIX + id).set({ deleted: true, deletedAt: Date.now(), deletedBy: U.user.name }, { merge: true });
+  logActivity("Amefuta matumizi", `${x.category} · ${fmt(x.amount)}`);
+}
+
+/* =====================================================================
+   💰 FUNGA SIKU — count the drawer and compare with what the system expects
+   ===================================================================== */
+function closeNumbers(date, scopeUserId) {
+  const mine = (x) => !scopeUserId || x.userId === scopeUserId;
+  const day = (x) => x.date === date;
+  const sales = D.sales.filter((s) => !s.deleted && day(s) && mine(s));
+  const cashSales = sales.filter((s) => s.pay === "Cash").reduce((a, s) => a + s.total, 0);
+  const digitalSales = sales.filter((s) => s.pay === "M-Pesa").reduce((a, s) => a + s.total, 0);
+  const creditSales = sales.filter((s) => s.pay === "Mkopo").reduce((a, s) => a + s.total, 0);
+  const pays = D.payments.filter((p) => day(p) && mine(p));
+  const debtCash = pays.filter((p) => p.via === "Cash").reduce((a, p) => a + p.amount, 0);
+  const debtDigital = pays.filter((p) => p.via !== "Cash").reduce((a, p) => a + p.amount, 0);
+  const exps = D.expenses.filter((x) => !x.deleted && day(x) && mine(x));
+  const expCash = exps.filter((x) => x.via === "Cash").reduce((a, x) => a + x.amount, 0);
+  return { receipts: sales.length, cashSales, digitalSales, creditSales, debtCash, debtDigital, expCash, expTotal: exps.reduce((a, x) => a + x.amount, 0) };
+}
+function pageClose() {
+  const f = U.closeForm;
+  const date = f.date || todayStr();
+  const users = posCfg().users;
+  const scope = isOwner() ? f.scope : U.user.id;   // "" = everyone (owner only)
+  const n = closeNumbers(date, scope);
+  const opening = Number(f.opening) || 0;
+  const expected = opening + n.cashSales + n.debtCash - n.expCash;
+  const counted = f.counted === "" ? null : Number(f.counted) || 0;
+  const diff = counted == null ? null : counted - expected;
+  const scopeName = scope ? (users.find((u) => u.id === scope) || {}).name : "Wote";
+  const [a, b] = rangeBounds(U.closeRange, U.closeFrom, U.closeTo);
+  const hist = D.closings.filter((c) => c.createdAt >= a && c.createdAt < b && (isOwner() || c.userId === U.user.id)).sort((x, y) => y.createdAt - x.createdAt);
+  const row = (l, v, sign, strong) => `<tr><td>${l}</td><td class="r" style="${strong ? "font-weight:800;font-size:15px" : ""}">${sign || ""}${fmt(v)}</td></tr>`;
+  return `<div class="split">
+  <div class="panel"><h2>💰 Funga Siku — hesabu ya droo</h2>
+    <div class="two">
+      <div><label class="l">Tarehe</label><input id="cl-date" class="field" type="date" value="${esc(date)}" ${isOwner() ? "" : "disabled"} onchange="U.closeForm.date=this.value;render()"></div>
+      <div><label class="l">Muuzaji</label>${isOwner()
+        ? `<select id="cl-scope" class="field" onchange="U.closeForm.scope=this.value;render()"><option value="">Wote</option>${users.map((u) => `<option value="${u.id}" ${scope === u.id ? "selected" : ""}>${esc(u.name)}</option>`).join("")}</select>`
+        : `<input class="field" value="${esc(U.user.name)}" disabled>`}</div>
+    </div>
+    <table style="margin-top:12px"><tbody>
+      <tr><td>Pesa ya kuanzia (float)</td><td class="r"><input id="cl-open" class="field sm" style="width:130px;text-align:right" inputmode="numeric" value="${esc(f.opening)}" placeholder="0" oninput="this.value=this.value.replace(/[^0-9]/g,'');U.closeForm.opening=this.value;soft(500)"></td></tr>
+      ${row(`💵 Mauzo ya Cash (risiti ${n.receipts})`, n.cashSales, "+ ")}
+      ${row("📒 Madeni yaliyolipwa kwa Cash", n.debtCash, "+ ")}
+      ${row("💸 Matumizi yaliyotoka droo", n.expCash, "− ")}
+      ${row("<b>Pesa INAYOTAKIWA kuwepo</b>", expected, "", true)}
+    </tbody></table>
+    <label class="l" style="margin-top:14px">Pesa uliyohesabu kwenye droo</label>
+    <input id="cl-count" class="field" inputmode="numeric" style="font-size:20px;font-weight:800" value="${esc(f.counted)}" placeholder="Hesabu pesa, kisha andika hapa" oninput="this.value=this.value.replace(/[^0-9]/g,'');U.closeForm.counted=this.value;soft(500)">
+    ${diff == null ? "" : `<div style="text-align:center;margin:14px 0 4px">
+      <div class="diff ${diff < 0 ? "short" : diff > 0 ? "over" : "ok"}">${diff === 0 ? "✅ Iko sawa kabisa" : diff < 0 ? "❌ Upungufu " + fmt(-diff) : "⚠️ Ziada " + fmt(diff)}</div></div>`}
+    <label class="l">Maelezo (hiari)</label>
+    <input id="cl-note" class="field" value="${esc(f.note)}" oninput="U.closeForm.note=this.value" placeholder="mf. Upungufu umeelezwa: chenji ya mteja">
+    <button class="btn btn-p" style="width:100%;margin-top:12px" onclick="saveClosing()" ${counted == null ? "disabled" : ""}>🔒 Funga siku na hifadhi</button>
+    <div class="note" style="margin:12px 0 0;display:block">
+      <b>Taarifa zisizo za droo (${esc(scopeName)}, ${esc(date)}):</b><br>
+      📱 Mauzo ya Simu/Benki: <b>${fmt(n.digitalSales)}</b> · 📱 Madeni kwa Simu/Benki: <b>${fmt(n.debtDigital)}</b><br>
+      📒 Mauzo ya Mkopo: <b>${fmt(n.creditSales)}</b> · 💸 Matumizi yote: <b>${fmt(n.expTotal)}</b>
+    </div>
+  </div>
+  <div class="panel"><h2>📜 Siku zilizofungwa</h2>${rangePicker("close")}
+    ${hist.length ? `<div class="tbl-wrap"><table><thead><tr><th>Siku</th><th>Muuzaji</th><th class="r">Inatakiwa</th><th class="r">Imehesabiwa</th><th class="r">Tofauti</th><th></th></tr></thead><tbody>
+    ${hist.map((c) => `<tr><td>${esc(c.date)}<div style="font-size:11px;color:var(--mute)">${dateTimeStr(c.createdAt)} · ${esc(c.byName)}</div></td><td>${esc(c.scopeName)}</td>
+      <td class="r">${num(c.expected)}</td><td class="r">${num(c.counted)}</td>
+      <td class="r"><span class="badge ${c.diff < 0 ? "" : c.diff > 0 ? "am" : "ok"}">${c.diff === 0 ? "sawa" : (c.diff > 0 ? "+" : "") + num(c.diff)}</span></td>
+      <td class="r"><button class="btn btn-g sm" onclick="printClosing('${c.id}')">🖨️</button></td></tr>`).join("")}
+    </tbody></table></div>` : `<div class="empty">Bado hakuna siku iliyofungwa kwenye kipindi hiki.</div>`}
+  </div></div>`;
+}
+function saveClosing() {
+  const f = U.closeForm, date = f.date || todayStr();
+  const scope = isOwner() ? f.scope : U.user.id;
+  const n = closeNumbers(date, scope);
+  const opening = Number(f.opening) || 0, counted = Number(f.counted) || 0;
+  const expected = opening + n.cashSales + n.debtCash - n.expCash;
+  const scopeName = scope ? (posCfg().users.find((u) => u.id === scope) || {}).name : "Wote";
+  const c = clean({ id: uid(), createdAt: Date.now(), date, userId: scope || "", scopeName, byId: U.user.id, byName: U.user.name,
+    opening, ...n, expected, counted, diff: counted - expected, note: f.note.trim() });
+  colRef.doc(CLOSE_PREFIX + c.id).set(c).catch(() => toast("⚠️ Haijafika cloud bado"));
+  logActivity("Amefunga siku", `${date} · ${scopeName} · inatakiwa ${fmt(expected)}, imehesabiwa ${fmt(counted)} (${c.diff === 0 ? "sawa" : c.diff < 0 ? "upungufu " + fmt(-c.diff) : "ziada " + fmt(c.diff)})`);
+  U.closeForm = { date: "", scope: f.scope, opening: "", counted: "", note: "" };
+  toast(c.diff === 0 ? "✅ Siku imefungwa — hesabu iko sawa" : c.diff < 0 ? "❌ Imefungwa — upungufu " + fmt(-c.diff) : "⚠️ Imefungwa — ziada " + fmt(c.diff));
+}
+function printClosing(id) {
+  const c = D.closings.find((x) => x.id === id); if (!c) return;
+  U.printList = {
+    title: "Kufunga Siku — " + c.date + " (" + c.scopeName + ")",
+    sub: "Imefungwa na " + c.byName + " · " + dateTimeStr(c.createdAt) + (c.note ? " · " + c.note : ""),
+    head: ["Kipengele", "Kiasi"],
+    rows: [["Pesa ya kuanzia", num(c.opening)], ["Mauzo ya Cash (risiti " + c.receipts + ")", num(c.cashSales)], ["Madeni yaliyolipwa Cash", num(c.debtCash)],
+      ["Matumizi kutoka droo", "−" + num(c.expCash)], ["INAYOTAKIWA", num(c.expected)], ["ILIYOHESABIWA", num(c.counted)],
+      ["TOFAUTI", (c.diff > 0 ? "+" : "") + num(c.diff)], ["Mauzo Simu/Benki", num(c.digitalSales)], ["Madeni Simu/Benki", num(c.debtDigital)], ["Mauzo ya Mkopo", num(c.creditSales)]],
+    foot: c.diff === 0 ? "Hesabu iko sawa ✅" : c.diff < 0 ? "UPUNGUFU: " + fmt(-c.diff) : "ZIADA: " + fmt(c.diff),
+  };
+  render();
+}
+
+/* =====================================================================
+   🔐 ULINZI — activate this device with the business email
+   ===================================================================== */
+function deviceLoginView() {
+  const f = U.devLogin || (U.devLogin = { email: "", pw: "", msg: "" });
+  return `<div class="login"><div class="login-card">
+    <div class="logo"><span class="mk">🔐</span>Washa kifaa hiki</div>
+    <p style="font-size:13px;color:var(--mute)">Database ya E.E.MSANGO imelindwa. Ingia mara moja kwa email ya biashara, na kifaa hiki kitakumbukwa.</p>
+    <input id="dv-email" class="field" type="email" autocomplete="username" placeholder="Email ya biashara" value="${esc(f.email)}" oninput="U.devLogin.email=this.value">
+    <input id="dv-pw" class="field" type="password" autocomplete="current-password" placeholder="Password" style="margin-top:8px" oninput="U.devLogin.pw=this.value" onkeydown="if(event.key==='Enter')activateDevice()">
+    ${f.msg ? `<div class="${f.ok ? "ok" : "err"}">${esc(f.msg)}</div>` : ""}
+    <button class="btn btn-p" style="width:100%;margin-top:12px" onclick="activateDevice()">Washa kifaa</button>
+  </div></div>`;
+}
+function activateDevice() {
+  const f = U.devLogin || (U.devLogin = { email: "", pw: "" });
+  if (!f.email.trim() || !f.pw) { f.msg = "Andika email na password."; f.ok = false; return render(); }
+  f.msg = "Inaingia…"; f.ok = true; render();
+  auth.signInWithEmailAndPassword(f.email.trim(), f.pw).then(() => {
+    f.msg = "✅ Kifaa kimewashwa. Inapakia upya…"; render(); setTimeout(() => location.reload(), 800);
+  }).catch((e) => {
+    const c = (e && e.code) || "";
+    f.msg = c.includes("operation-not-allowed") ? "Email/Password haijawashwa kwenye Firebase (Authentication → Sign-in method)."
+      : /wrong-password|invalid-credential|user-not-found|invalid-login/.test(c) ? "Email au password si sahihi."
+      : c.includes("network") ? "Hakuna mtandao." : "Imeshindikana: " + ((e && e.message) || c);
+    f.ok = false; render();
+  });
+}
+function securityPanel() {
+  const u = auth.currentUser, secured = !!(u && !u.isAnonymous);
+  const f = U.devLogin || (U.devLogin = { email: "", pw: "", msg: "" });
+  return `<div class="panel"><h2>🔐 Ulinzi wa Database</h2>
+    <p style="font-size:13px;margin:0 0 8px">Kifaa hiki: <b>${secured ? "✅ Kimewashwa kwa " + esc(u.email) : "⚠️ Njia ya zamani (anonymous) — ulinzi dhaifu"}</b></p>
+    ${secured ? `<button class="btn btn-g sm" onclick="if(confirm('Toa kifaa hiki? Utahitaji kukiwasha tena.'))auth.signOut().then(()=>location.reload())">Toa kifaa hiki</button>
+      <p class="hint">Vifaa VYOTE (simu, computer, POS na system ya kwanza) vikishawashwa, weka rules hizi kwenye Firebase Console → Firestore Database → Rules → Publish:</p>
+      <pre style="font-size:11px;background:var(--bg);padding:8px;border-radius:8px;overflow-x:auto">rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /wadai_na_wadaiwa/{docId} {
+      allow read, write: if request.auth != null
+        &amp;&amp; request.auth.token.email == "${esc(u.email)}";
+    }
+  }
+}</pre>`
+    : `<ol class="hint" style="padding-left:18px;margin:4px 0 8px">
+        <li>Firebase Console → <b>Authentication → Sign-in method</b> → washa <b>Email/Password</b></li>
+        <li><b>Authentication → Users → Add user</b>: email ya biashara + password imara</li>
+        <li>Andika email na password hapa → <b>Washa kifaa hiki</b>. Rudia kwenye kila kifaa.</li>
+      </ol>
+      <input id="sc-email" class="field" type="email" placeholder="Email ya biashara" value="${esc(f.email)}" oninput="U.devLogin.email=this.value">
+      <input id="sc-pw" class="field" type="password" placeholder="Password" style="margin-top:6px" oninput="U.devLogin.pw=this.value">
+      ${f.msg ? `<div class="${f.ok ? "ok" : "err"}">${esc(f.msg)}</div>` : ""}
+      <button class="btn btn-p" style="width:100%;margin-top:8px" onclick="activateDevice()">Washa kifaa hiki</button>`}
+  </div>`;
+}
