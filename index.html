@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>E.E.MSANGO POS — Mauzo</title>
 <meta name="theme-color" content="#0e2a3f">
+<script>try{document.documentElement.setAttribute("data-theme",localStorage.getItem("ee_theme")||"light")}catch(e){}</script>
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -19,6 +20,12 @@
   --bg:#eef2f5; --card:#ffffff; --ink:#15212b; --mute:#6c7a86; --line:#dde4ea; --chip:#e5edf2;
   box-sizing:border-box; padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
 }
+/* ===== DARK MODE ===== */
+:root[data-theme="dark"]{--bg:#0d1820;--card:#15242f;--ink:#e6edf3;--mute:#93a4b1;--line:#24394a;--chip:#1d3242;color-scheme:dark}
+:root[data-theme="dark"] .tab.on{background:#e6edf3;color:#0e2a3f}
+:root[data-theme="dark"] .note{background:rgba(240,169,46,.14)}
+:root[data-theme="dark"] .banner pre{background:#0d1820;color:#e6edf3}
+:root[data-theme="dark"] input[type=date]{color-scheme:dark}
 *,*::before,*::after{box-sizing:inherit}
 html,body{height:100%;margin:0}
 body{background:var(--bg);color:var(--ink);font-family:'Manrope',system-ui,-apple-system,'Segoe UI',sans-serif;font-size:14px;-webkit-tap-highlight-color:transparent}
@@ -58,11 +65,11 @@ label.l{display:block;font-size:12px;font-weight:700;color:var(--mute);margin:10
 .tabs{display:flex;gap:4px;background:var(--navy2);padding:6px;overflow-x:auto;position:sticky;top:52px;z-index:4}
 .tab{background:transparent;color:#cfe0ea;border:0;padding:8px 13px;border-radius:8px;font-weight:700;font-size:13px;white-space:nowrap}
 .tab.on{background:#fff;color:var(--navy)}
-main{padding:14px;max-width:1400px;margin:0 auto}
+main{padding:14px;width:100%}
 .banner{background:rgba(214,69,69,.1);border:1px solid rgba(214,69,69,.35);color:var(--ink);border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:13px}
 .banner pre{background:#fff;color:#111;padding:8px;border-radius:6px;overflow-x:auto;font-size:11px}
 /* POS */
-.pos{display:grid;grid-template-columns:1fr 400px;gap:14px;align-items:start}
+.pos{display:grid;grid-template-columns:1fr minmax(360px,30%);gap:14px;align-items:start}
 @media(max-width:900px){.pos{grid-template-columns:1fr}}
 .panel{background:var(--card);border-radius:14px;padding:14px;border:1px solid var(--line)}
 .panel+.panel{margin-top:14px}
@@ -73,7 +80,8 @@ main{padding:14px;max-width:1400px;margin:0 auto}
 .chips{display:flex;gap:6px;overflow-x:auto;margin:10px 0;padding-bottom:2px}
 .chip{border:0;background:var(--chip);color:var(--ink);padding:7px 12px;border-radius:20px;font-weight:600;font-size:12.5px;white-space:nowrap}
 .chip.on{background:var(--teal);color:#fff}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;max-height:64vh;overflow:auto;padding:2px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;height:calc(100vh - 300px);min-height:300px;overflow:auto;padding:2px;align-content:start}
+@media(max-width:900px){.grid{height:auto;max-height:60vh}}
 .prod{background:var(--bg);border:1px solid var(--line);border-radius:11px;padding:10px;text-align:left;color:var(--ink);display:flex;flex-direction:column;gap:3px;min-height:92px}
 .prod:hover:not(:disabled){border-color:var(--teal)}
 .prod .nm{font-weight:700;font-size:12.5px;line-height:1.25}
@@ -82,7 +90,10 @@ main{padding:14px;max-width:1400px;margin:0 auto}
 .prod .st{font-size:11px;color:var(--mute)}
 .prod .st.low{color:var(--red);font-weight:700}
 .cart-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px}
-.cart-list{max-height:36vh;overflow:auto;display:flex;flex-direction:column;gap:6px}
+.cart-list{max-height:calc(100vh - 560px);min-height:110px;overflow:auto;display:flex;flex-direction:column;gap:6px}
+@media(max-width:900px){.cart-list{max-height:none}}
+#cart{position:sticky;top:110px}
+@media(max-width:900px){#cart{position:static}}
 .line{display:grid;grid-template-columns:1fr auto;gap:6px 8px;align-items:center;padding:8px;border-radius:9px;background:var(--bg)}
 .line .n{font-weight:700;font-size:12.5px}
 .line .s{font-size:11.5px;color:var(--mute);display:flex;align-items:center;gap:6px;flex-wrap:wrap}
@@ -158,6 +169,11 @@ h3{font-size:14.5px;margin:0 0 10px}
 .act .tm{color:var(--mute);white-space:nowrap;font-size:11.5px;min-width:120px}
 .switch{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600}
 .switch input{width:18px;height:18px}
+.diff{font-size:26px;font-weight:800}
+.diff.short{color:var(--red)}.diff.over{color:var(--amber)}.diff.ok{color:var(--teal)}
+.icon-top{background:transparent;color:#cfe0ea;border:1px solid #3d6680;border-radius:8px;padding:5px 8px;font-size:13px}
+.debtor{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:11px 12px;border:1px solid var(--line);border-radius:10px;margin-bottom:8px;background:var(--bg);cursor:pointer;width:100%;color:var(--ink);text-align:left;font:inherit}
+.debtor:hover{border-color:var(--teal)}
 </style>
 </head>
 <body>
@@ -165,7 +181,7 @@ h3{font-size:14.5px;margin:0 0 10px}
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="pos.js?v=1"></script>
+<script src="pos.js?v=2"></script>
 <script>
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 </script>
