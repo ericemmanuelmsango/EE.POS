@@ -6,7 +6,7 @@
      • credit (Mkopo) sales are added to the customer's account in Debtors
      • has its own users, sales, reports and settings
    ===================================================================== */
-const APP_VERSION = "POS v1.4";
+const APP_VERSION = "POS v1.5";
 const firebaseConfig = {
   apiKey: "AIzaSyCgoZC_HGNZfcDgnyNRd6-rKdpZy1MIIiM",
   authDomain: "shem-rogart-motor-spair-parts.firebaseapp.com",
@@ -118,7 +118,10 @@ function startListening() {
     });
     D.settings = main.settings || {};
     const pick = (pre) => Object.keys(docs).filter((id) => id.startsWith(pre)).map((id) => docs[id]);
-    D.sales = pick(SALE_PREFIX);
+    // mauzo yaliyofutwa KABISA kwenye Wadai (purged): yanabaki kwa ajili ya stock tu, hayaonekani popote
+    const allSales = pick(SALE_PREFIX);
+    D.sales = allSales.filter((x) => !x.purged);
+    D.purged = allSales.filter((x) => x.purged);
     D.expenses = pick(EXP_PREFIX);
     D.payments = pick(PAY_PREFIX);
     D.closings = pick(CLOSE_PREFIX);
@@ -151,7 +154,7 @@ function rebuildView() {
     qty[m.itemId] = (qty[m.itemId] || 0) + (m.type === "in" ? m.qty : -m.qty);
     if (m.type === "in" && m.price != null) { inQty[m.itemId] = (inQty[m.itemId] || 0) + m.qty; inCost[m.itemId] = (inCost[m.itemId] || 0) + m.qty * m.price; }
   });
-  D.sales.forEach((s) => (s.items || []).forEach((i) => { qty[i.itemId] = (qty[i.itemId] || 0) - i.qty; }));
+  D.sales.concat(D.purged || []).forEach((s) => (s.items || []).forEach((i) => { qty[i.itemId] = (qty[i.itemId] || 0) - i.qty; }));
   const prodByName = {};
   D.products.forEach((p) => { if (!p.deleted) prodByName[normName(p.name)] = p; });
   const cfg = posCfg();
