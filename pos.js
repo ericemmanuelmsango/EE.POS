@@ -6,7 +6,7 @@
      • credit (Mkopo) sales are added to the customer's account in Debtors
      • has its own users, sales, reports and settings
    ===================================================================== */
-const APP_VERSION = "POS v1.6";
+const APP_VERSION = "POS v1.7";
 const firebaseConfig = {
   apiKey: "AIzaSyCgoZC_HGNZfcDgnyNRd6-rKdpZy1MIIiM",
   authDomain: "shem-rogart-motor-spair-parts.firebaseapp.com",
@@ -1010,13 +1010,12 @@ function receiptModal(r) {
   return `<div class="ov"><div style="width:100%;max-width:340px">
   ${SYNCING.has(r.id) ? `<div class="no-print" style="background:#fff7e6;color:#7a4a00;border-radius:8px;padding:8px 10px;margin-bottom:8px;font-size:12.5px;font-weight:600">⏳ Mauzo yanatumwa cloud… yamehifadhiwa kwenye kifaa hiki, hayatapotea hata ukiprint au mtandao ukikatika.</div>` : ""}
   <div class="rcpt print-area">
-    <div class="lg">${logoHtml()}</div>
-    <h3>${esc(sh.name)}</h3>
+    <h3 style="font-size:20px;letter-spacing:3px">INVOICE</h3>
     <div class="c" style="font-weight:700">${esc(sh.line)}</div>
     ${sh.phone ? `<div class="c">Simu: ${esc(sh.phone)}</div>` : ""}
     ${sh.address ? `<div class="c">${esc(sh.address)}</div>` : ""}
     <div class="dl"></div>
-    <div>Risiti: <b>${esc(r.no)}</b></div>
+    <div>Invoice Na: <b>${esc(r.no)}</b></div>
     <div>${dateTimeStr(r.createdAt)}</div>
     ${r.customer ? `<div>Mteja: ${esc(r.customer)}</div>${r.phone ? `<div>Simu: ${esc(r.phone)}</div>` : ""}` : ""}
     <div class="dl"></div>
