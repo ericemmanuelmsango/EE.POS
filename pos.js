@@ -6,7 +6,7 @@
      • credit (Mkopo) sales are added to the customer's account in Debtors
      • has its own users, sales, reports and settings
    ===================================================================== */
-const APP_VERSION = "POS v1.7";
+const APP_VERSION = "POS v1.8";
 const firebaseConfig = {
   apiKey: "AIzaSyCgoZC_HGNZfcDgnyNRd6-rKdpZy1MIIiM",
   authDomain: "shem-rogart-motor-spair-parts.firebaseapp.com",
@@ -18,6 +18,38 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 try { db.enablePersistence({ synchronizeTabs: true }).catch(() => {}); } catch (e) {}   // mauzo yanahifadhiwa kwenye kifaa mpaka yafike cloud — hayapotei ukiprint au ukirefresh
+
+/* ---------- ⚡ LIVE SYNC — data zifike kwenye vifaa vyote papo hapo ----------
+   Firestore inatuma kila badiliko kwa vifaa vyote vilivyo wazi. Mlinzi huyu anahakikisha
+   kifaa HAKIKOSI mabadiliko ya wengine: app ikirudi kwenye skrini (baada ya >20s), internet
+   ikirudi, au kifaa kikikatika na cloud >20s wakati internet ipo → anaunganisha upya
+   (Firestore inachukua mabadiliko yaliyokosekana tu, si data zote). */
+const LIVE = (function () {
+  let cacheSince = 0, hiddenAt = 0, busy = false, lastTry = 0, tries = 0;
+  function mark(meta) {
+    if (!meta) return;
+    if (meta.fromCache) { if (!cacheSince) cacheSince = Date.now(); } else { cacheSince = 0; tries = 0; }
+  }
+  function reconnect() {
+    if (busy || navigator.onLine === false || !db) return;
+    busy = true; lastTry = Date.now(); tries++;
+    db.disableNetwork().catch(() => {}).then(() => db.enableNetwork()).catch(() => {}).then(() => { busy = false; });
+  }
+  setInterval(() => {
+    if (document.hidden || navigator.onLine === false) return;
+    const wait = 30000 * Math.min(tries + 1, 6);          // 30s, 60s ... mpaka dakika 3 kati ya majaribio
+    if (Date.now() - lastTry < wait) return;
+    const stuckOffline = cacheSince && Date.now() - cacheSince > 20000;   // haijaunganika na cloud >20s
+    // (data zinazokwama KUTUMWA zinashughulikiwa na mtandao.js)
+    if (stuckOffline) reconnect();
+  }, 10000);
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) { hiddenAt = Date.now(); return; }
+    if (hiddenAt && Date.now() - hiddenAt > 20000) reconnect();   // app imerudi kwenye skrini → chukua mabadiliko mapya mara moja
+  });
+  window.addEventListener("online", () => setTimeout(reconnect, 500));
+  return { mark, reconnect };
+})();
 const auth = firebase.auth();
 const colRef = db.collection("wadai_na_wadaiwa");   // same place the first system keeps its data
 const POS_DOC = "pos_settings";
@@ -88,6 +120,7 @@ function posCfg() {
 function startListening() {
   const _DOCS = {};
   colRef.onSnapshot({ includeMetadataChanges: true }, (snap) => {
+    LIVE.mark(snap.metadata);
     // soma hati zilizobadilika TU (si zote kila mara) — inapunguza uzito kwenye simu/tablet
     const ch = typeof snap.docChanges === "function" ? snap.docChanges() : null;
     const had = Object.keys(_DOCS).length;
@@ -1469,8 +1502,12 @@ service cloud.firestore {
     document.body.appendChild(b);
   }
   setTimeout(check, 4000);
-  setInterval(check, 5 * 60 * 1000);
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) check(); });
+  setInterval(check, 2 * 60 * 1000);
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) return;
+    const a = document.activeElement, typing = a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName);
+    if (shown && !typing) location.replace(location.pathname + "?v=" + Date.now()); else check();
+  });
 })();
 
 /* =====================================================================
